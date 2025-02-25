@@ -128,21 +128,32 @@ def train():
     training_server.current_window = step_window
     
     # Create a background task for training
-    async def run_training():
-        gradients, metrics, pages = await training_server.train_window(
-            step_window, batch_size, sequence_length, pages_per_window
-        )
+    def run_training():
+        # Create a new event loop for this thread
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
         
-        # Store results for later retrieval
-        training_server.last_results = {
-            'window': step_window,
-            'metrics': metrics,
-            'pages': [p[1] for p in pages],
-            'gradients_ready': True
-        }
+        try:
+            # Run the async training function in this thread's event loop
+            gradients, metrics, pages = loop.run_until_complete(
+                training_server.train_window(step_window, batch_size, sequence_length, pages_per_window)
+            )
+            
+            # Store results for later retrieval
+            training_server.last_results = {
+                'window': step_window,
+                'metrics': metrics,
+                'pages': [p[1] for p in pages],
+                'gradients_ready': True
+            }
+            training_server.last_gradients = gradients
+        finally:
+            loop.close()
     
-    # Start the training task in the background
-    asyncio.run_coroutine_threadsafe(run_training(), asyncio.get_event_loop())
+    # Start the training task in a new thread
+    training_thread = threading.Thread(target=run_training)
+    training_thread.daemon = True
+    training_thread.start()
     
     return jsonify({
         'status': 'training_started',
